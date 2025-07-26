@@ -7,7 +7,7 @@ from instruction import central_agent_prompt, response_instruct
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--engine', type=str, default='gpt-4o-2024-08-06')
+    parser.add_argument('--engine', type=str, default='gemini-2.0-flash-exp')
     parser.add_argument('--dataset_dir', type=str, default="./ControlEval/")
     parser.add_argument('--dataset_files', nargs='+', help='List of dataset file names', default=None)
     args = parser.parse_args()

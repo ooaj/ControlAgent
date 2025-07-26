@@ -9,7 +9,7 @@ from instruction import overall_instruction_PID, response_format_PID
 
 class second_ord_stable_Design:
 
-    def __init__(self, engine='gpt-4o-2024-08-06', base_output_dir = "./outputs/test", temperature=0.0, max_tokens=1024):
+    def __init__(self, engine='gemini-2.0-flash-exp', base_output_dir = "./outputs/test", temperature=0.0, max_tokens=1024):
         self.gpt4 = GPT4(engine=engine, temperature=temperature, max_tokens=max_tokens)
         self.max_attempts = 10
         self.design_memory = design_memory()

@@ -1,0 +1,32 @@
+[
+    {
+        "id": 0,
+        "num": [19.95021931031938],
+        "num_uncertainty": [0.20],
+        "den": [1, 0.3896702460734107],
+        "den_uncertainty": [0.0, 0.15],
+        "gain_margin_min": 8.62870302276917,
+        "phase_margin_min": 71.54215764094216,
+        "overshoot_max": 10.66329445944194,
+        "steadystate_error_max": 0.0001,
+        "metadata": "First order system with ±20% gain, ±15% pole uncertainty",
+        "settling_time_min": 0.004778155924598053,
+        "settling_time_max": 3.72640213624652,
+        "scenario": "fast_uncertain"
+    },
+    {
+        "id": 1,
+        "num": [7.655708181262964],
+        "num_uncertainty": [0.25],
+        "den": [1, 14.550345193500485],
+        "den_uncertainty": [0.0, 0.10],
+        "gain_margin_min": 6.087889248301407,
+        "phase_margin_min": 63.96436599038023,
+        "overshoot_max": 16.709979010893864,
+        "steadystate_error_max": 0.0001,
+        "metadata": "First order system with ±25% gain, ±10% pole uncertainty",
+        "settling_time_min": 0.00018823260198819674,
+        "settling_time_max": 0.06636117958004117,
+        "scenario": "fast_uncertain"
+    }
+]

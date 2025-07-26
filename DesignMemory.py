@@ -4,6 +4,8 @@
 class design_memory:
     def __init__(self):
         self.buffer = []
+        self.memory_log = []
+        self.feedback_log = []
 
     def add_design(self, parameters, performance):
         """
@@ -30,3 +32,19 @@ class design_memory:
         if self.buffer:
             return self.buffer[-1]
         return None
+    
+    def add_memory(self, message):
+        """Add a memory entry."""
+        self.memory_log.append(message)
+    
+    def get_memory(self):
+        """Get all memory entries as a string."""
+        return "\n".join(self.memory_log)
+    
+    def add_feedback(self, feedback):
+        """Add feedback entry.""" 
+        self.feedback_log.append(feedback)
+    
+    def get_feedback(self):
+        """Get all feedback entries as a string."""
+        return "\n".join(self.feedback_log)

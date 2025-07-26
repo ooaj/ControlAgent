@@ -8,7 +8,7 @@ import os
 
 class first_ord_unstable_Design:
 
-    def __init__(self, engine='gpt-4o-2024-08-06', temperature=0.0, max_tokens=1024):
+    def __init__(self, engine='gemini-2.0-flash-exp', temperature=0.0, max_tokens=1024):
         self.gpt4 = GPT4(engine=engine, temperature=temperature, max_tokens=max_tokens)
         self.max_attempts = 20
         self.design_memory = design_memory()

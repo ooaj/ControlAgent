@@ -11,6 +11,7 @@ Here are the available task-specific agents:
 - **Agent 4**: Second-order unstable system
 - **Agent 5**: First-order system with time delay
 - **Agent 6**: Higher-order system
+- **Agent 7**: Systems with parameter uncertainty (robust control)
 
 Ensure the selected agent can effectively tailor the control design process.
 
@@ -29,14 +30,14 @@ Your response should strictly follow the JSON format below, containing three key
 
 - **Task Requirement**: Summarize the task requirements, including the system dynamics and performance criteria provided by the user.
 - **Task Analysis**: Provide a brief analysis of the system and justify the selection of the task-specific agent.
-- **Agent Number**: Specify the task-specific agent number (choose from 1 to 6).
+- **Agent Number**: Specify the task-specific agent number (choose from 1 to 7).
 
 ### Example of the expected JSON format:
 
 {
     "Task Requirement": "[Summarize the system dynamics and performance criteria provided by the user]",
     "Task Analysis": "[Provide a brief analysis and rationale for the agent selection]",
-    "Agent Number": "[Task-specific agent number: 1, 2, 3, 4, 5, or 6]"
+    "Agent Number": "[Task-specific agent number: 1, 2, 3, 4, 5, 6, or 7]"
 }
 
 """
