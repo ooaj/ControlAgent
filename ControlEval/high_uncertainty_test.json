@@ -1,0 +1,32 @@
+[
+    {
+        "id": 0,
+        "num": [15.0],
+        "den": [1, 0.5],
+        "num_uncertainty": [0.30],
+        "den_uncertainty": [0.0, 0.25],
+        "gain_margin_min": 6.0,
+        "phase_margin_min": 60.0,
+        "overshoot_max": 20.0,
+        "steadystate_error_max": 0.01,
+        "metadata": "High uncertainty system: ±30% gain, ±25% pole → 55% combined",
+        "settling_time_min": 0.1,
+        "settling_time_max": 4.0,
+        "scenario": "high_uncertainty"
+    },
+    {
+        "id": 1,
+        "num": [8.0],
+        "den": [1, 10.0],
+        "num_uncertainty": [0.20],
+        "den_uncertainty": [0.0, 0.15],
+        "gain_margin_min": 6.0,
+        "phase_margin_min": 45.0,
+        "overshoot_max": 15.0,
+        "steadystate_error_max": 0.01,
+        "metadata": "Moderate uncertainty system: ±20% gain, ±15% pole → 35% combined",
+        "settling_time_min": 0.05,
+        "settling_time_max": 1.0,
+        "scenario": "moderate_uncertainty"
+    }
+]

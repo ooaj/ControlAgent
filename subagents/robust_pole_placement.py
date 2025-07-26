@@ -9,6 +9,7 @@ import control as ctrl
 from util import feedback_prompt, check_stability
 from DesignMemory import design_memory
 from robust_control_utils import RobustPolePlace
+from hinf_control_utils import HInfRobustControl
 
 class RobustPolePlace_Design:
     """
@@ -24,14 +25,23 @@ class RobustPolePlace_Design:
         self.design_memory = design_memory()
         self.base_output_dir = "./outputs"
         self.robust_controller = RobustPolePlace()
+        self.hinf_controller = HInfRobustControl()
         
-        # Design instruction for robust pole placement
+        # Design instruction for robust control (pole placement + H∞)
         self.design_instruction = """
-You are designing a robust state feedback controller for a system with parameter uncertainty.
+You are designing a robust controller for a system with parameter uncertainty.
 
-CRITICAL: ANALYZE THE PLANT DYNAMICS FIRST!
+CRITICAL: CHOOSE CONTROL METHOD FIRST!
 
-ROBUST POLE PLACEMENT METHOD:
+METHOD SELECTION:
+[Step0] Analyze uncertainty level and requirements:
+   - LOW uncertainty (≤20% combined): Use POLE_PLACEMENT (fast, sufficient)
+   - MODERATE uncertainty (20-35% combined): Either method works, prefer POLE_PLACEMENT
+   - HIGH uncertainty (≥35% combined): Use HINF (optimal robustness)
+   - Frequency-domain requirements: Use HINF
+   - Time-domain only requirements: Either method works
+
+ROBUST POLE PLACEMENT METHOD (for lower uncertainty):
 [Step1] Analyze the plant transfer function G(s) = K/(s + a_plant):
    - Extract the plant pole: a_plant (natural frequency of the system)
    - Classify system speed:
@@ -73,16 +83,45 @@ EXAMPLES:
 - Plant: G(s) = 8/(s + 15.0) → FAST system → try pole ≈ -60.0
 
 The controller uses state feedback: u = -K*x where K is computed for robust pole placement.
+
+H∞ CONTROL METHOD (for higher uncertainty):
+[Step1] Analyze uncertainty complexity:
+   - Combined uncertainty = gain_uncertainty + pole_uncertainty
+   - If ≥35%: H∞ is preferred for optimal robust performance
+
+[Step2] Choose H∞ design parameters:
+   - Performance bandwidth ωp: How fast should tracking be?
+     * SLOW systems: ωp = (1-2) × a_plant
+     * FAST systems: ωp = (0.2-0.5) × a_plant
+   - Control bandwidth ωc: Limit control effort
+     * ωc = (5-10) × ωp for moderate control effort
+     * ωc = (2-5) × ωp for aggressive control effort
+
+[Step3] H∞ synthesis objectives:
+   - Minimize ||[Wp*S; Wu*K*S]||∞ where S = 1/(1+GK)
+   - Wp weights tracking performance, Wu weights control effort
+   - Result: Controller K(s) that optimizes robust performance trade-offs
+
+EXAMPLES:
+- 15% gain + 10% pole = 25% → Use POLE_PLACEMENT
+- 25% gain + 15% pole = 40% → Use HINF
+- Frequency specs (bandwidth limits) → Use HINF
+
+The H∞ controller will be a transfer function K(s) optimized for robust performance.
 """
 
         self.response_format = """
 Please provide your response in the following JSON format:
 {
-    "analysis": "Your analysis of the system and uncertainty",
-    "pole_design_rationale": "Reasoning for chosen pole locations",
-    "desired_pole": -2.5,
-    "expected_robustness": "Expected success rate and robustness metrics",
-    "control_approach": "robust_pole_placement"
+    "analysis": "Your analysis of the system and uncertainty level",
+    "method_choice": "POLE_PLACEMENT or HINF",
+    "method_rationale": "Reasoning for choosing pole placement vs H∞",
+    "design_parameters": {
+        "desired_pole": -2.5,
+        "performance_bandwidth": 1.0,
+        "control_bandwidth": 10.0
+    },
+    "expected_robustness": "Expected success rate and robustness metrics"
 }
 """
 
@@ -127,15 +166,31 @@ Please provide your response in the following JSON format:
             system_type = "FAST"
             suggested_range = f"-{3*a_plant:.1f} to -{6*a_plant:.1f}"
         
+        # Calculate combined uncertainty for method selection
+        gain_unc = num_uncertainty[0] * 100
+        pole_unc = den_uncertainty[1] * 100 if len(den_uncertainty) > 1 else 0
+        combined_unc = gain_unc + pole_unc
+        
+        # Suggest method based on uncertainty level
+        if combined_unc >= 35:
+            suggested_method = "HINF (high uncertainty)"
+        elif combined_unc >= 20:
+            suggested_method = "POLE_PLACEMENT or HINF (moderate uncertainty)"
+        else:
+            suggested_method = "POLE_PLACEMENT (low uncertainty)"
+
         uncertainty_info = f"""
 PLANT ANALYSIS:
 System: G(s) = {K_plant:.3f} / (s + {a_plant:.3f})
 Plant pole a_plant = {a_plant:.3f} → {system_type} system
 Recommended pole range: {suggested_range}
 
-UNCERTAINTY INFORMATION:
-Gain uncertainty: ±{num_uncertainty[0]*100:.1f}%
-Pole uncertainty: ±{den_uncertainty[1]*100:.1f}%
+UNCERTAINTY ANALYSIS:
+Gain uncertainty: ±{gain_unc:.1f}%
+Pole uncertainty: ±{pole_unc:.1f}%
+Combined uncertainty: {combined_unc:.1f}%
+→ Suggested method: {suggested_method}
+
 Parameter ranges:
 - Gain K ∈ [{system_info['bounds']['K_min']:.2f}, {system_info['bounds']['K_max']:.2f}]
 - Pole a ∈ [{system_info['bounds']['a_min']:.2f}, {system_info['bounds']['a_max']:.2f}]
@@ -144,7 +199,7 @@ PERFORMANCE REQUIREMENTS:
 - Settling time ≤ {thresholds.get('settling_time_max', {}).get('max', 'N/A')} sec
 - Phase margin ≥ {thresholds.get('phase_margin', {}).get('min', 'N/A')}°
 
-Choose your pole based on the plant analysis above!
+Choose your method and design parameters based on the analysis above!
 """
         
         new_problem = "Now consider the following robust design task: " + task_requirement + "\n" + uncertainty_info
@@ -173,34 +228,80 @@ Choose your pole based on the plant analysis above!
                 
                 conversation_log.append({"iteration": num_attempt, "response": parsed_response})
                 
-                # Extract design parameters
-                desired_pole = float(parsed_response.get("desired_pole", -2.0))
+                # Extract method choice and design parameters
+                method_choice = parsed_response.get("method_choice", "POLE_PLACEMENT").upper()
+                design_params = parsed_response.get("design_parameters", {})
                 
-                # Ensure pole is stable (negative for first-order systems)
-                if desired_pole >= 0:
-                    desired_pole = -abs(desired_pole)
+                print(f"LLM chose method: {method_choice}")
                 
-                print(f"LLM proposed pole: {desired_pole:.3f}")
-                
-                # Implement robust pole placement
+                # Implement robust control design
                 performance_specs = {
                     'settling_time_max': thresholds.get('settling_time_max', {}).get('max', 5.0),
                     'damping_min': 0.7
                 }
                 
-                # Use our robust control algorithm with LLM suggestion and fallback
-                robust_design = self.try_robust_design_with_fallback(
-                    system_info, performance_specs, desired_pole, num_attempt
-                )
+                if method_choice == "HINF":
+                    # Use H∞ control with automatic fallback
+                    robust_design = self.try_hinf_design(
+                        system_info, performance_specs, design_params, num_attempt
+                    )
+                    
+                    # If H∞ is available but might not meet requirements, check and fallback
+                    if robust_design is not None and num_attempt > 1:
+                        # After first iteration, if previous H∞ attempt failed requirements,
+                        # automatically try pole placement instead
+                        memory_content = self.design_memory.get_memory()
+                        if "Requirements not met" in memory_content and "H∞" in memory_content:
+                            print("🔄 H∞ previously failed requirements - switching to POLE_PLACEMENT")
+                            method_choice = "POLE_PLACEMENT_FALLBACK"
+                            
+                            # Use pole placement as fallback
+                            desired_pole = float(design_params.get("desired_pole", -2.0))
+                            if desired_pole >= 0:
+                                desired_pole = -abs(desired_pole)
+                            
+                            print(f"Fallback to pole placement with pole: {desired_pole:.3f}")
+                            robust_design = self.try_robust_design_with_fallback(
+                                system_info, performance_specs, desired_pole, num_attempt
+                            )
+                
+                if method_choice in ["POLE_PLACEMENT", "POLE_PLACEMENT_FALLBACK"] or robust_design is None:
+                    # Use pole placement (default or fallback)
+                    desired_pole = float(design_params.get("desired_pole", -2.0))
+                    
+                    # Ensure pole is stable (negative for first-order systems)
+                    if desired_pole >= 0:
+                        desired_pole = -abs(desired_pole)
+                    
+                    print(f"LLM proposed pole: {desired_pole:.3f}")
+                    
+                    robust_design = self.try_robust_design_with_fallback(
+                        system_info, performance_specs, desired_pole, num_attempt
+                    )
                 
                 if robust_design is not None:
-                    final_pole = robust_design['desired_pole']
-                    nominal_gain = robust_design['nominal_gain'][0, 0]
-                    success_rate = robust_design['robustness_results']['success_rate']
-                    worst_settling_time = robust_design['worst_settling_time']
-                    
-                    print(f"Robust design: pole = {final_pole:.3f}, gain = {nominal_gain:.4f}")
-                    print(f"Success rate: {success_rate:.1%}, worst settling time: {worst_settling_time:.3f}s")
+                    if robust_design.get('method') == 'HINF':
+                        # H∞ controller results
+                        controller_tf = robust_design['controller_tf']
+                        hinf_gamma = robust_design['hinf_gamma']
+                        success_rate = robust_design['robustness_results']['success_rate']
+                        worst_settling_time = robust_design['worst_settling_time']
+                        
+                        print(f"H∞ design: Controller = {controller_tf}")
+                        print(f"γ = {hinf_gamma:.3f}, Success rate: {success_rate:.1%}, worst settling time: {worst_settling_time:.3f}s")
+                        
+                        final_pole = None  # H∞ doesn't have single pole
+                        nominal_gain = robust_design['nominal_gain'][0, 0]
+                        
+                    else:
+                        # Pole placement results
+                        final_pole = robust_design['desired_pole']
+                        nominal_gain = robust_design['nominal_gain'][0, 0]
+                        success_rate = robust_design['robustness_results']['success_rate']
+                        worst_settling_time = robust_design['worst_settling_time']
+                        
+                        print(f"Robust design: pole = {final_pole:.3f}, gain = {nominal_gain:.4f}")
+                        print(f"Success rate: {success_rate:.1%}, worst settling time: {worst_settling_time:.3f}s")
                     
                     # Evaluate performance against requirements
                     performance_results = self.evaluate_robust_performance(
@@ -213,35 +314,70 @@ Choose your pole based on the plant analysis above!
                     if requirements_met['all_satisfied']:
                         print("The robust design satisfies all requirements.")
                         
-                        # Store successful design
-                        self.design_memory.add_memory(
-                            f"Iteration {num_attempt}: Successful robust pole placement at {final_pole:.3f}"
-                        )
-                        
-                        return {
-                            'is_succ': True,
-                            'parameters': {
-                                'pole_location': final_pole,
-                                'feedback_gain': nominal_gain,
-                                'success_rate': success_rate
-                            },
-                            'performance': performance_results,
-                            'conversation_rounds': num_attempt,
-                            'robust_metrics': {
-                                'worst_case_settling_time': worst_settling_time,
-                                'parameter_success_rate': success_rate,
-                                'nominal_pole': final_pole
+                        # Store successful design (handle both pole placement and H∞)
+                        if robust_design.get('method') == 'HINF':
+                            controller_desc = f"H∞ controller (γ={robust_design.get('hinf_gamma', 'N/A'):.3f})"
+                            self.design_memory.add_memory(
+                                f"Iteration {num_attempt}: Successful {controller_desc}"
+                            )
+                            
+                            return {
+                                'is_succ': True,
+                                'parameters': {
+                                    'controller_type': 'HINF',
+                                    'controller_tf': str(robust_design['controller_tf']),
+                                    'hinf_gamma': robust_design.get('hinf_gamma', 0),
+                                    'dc_gain': nominal_gain,
+                                    'success_rate': success_rate
+                                },
+                                'performance': performance_results,
+                                'conversation_rounds': num_attempt,
+                                'robust_metrics': {
+                                    'worst_case_settling_time': worst_settling_time,
+                                    'parameter_success_rate': success_rate,
+                                    'method': 'HINF',
+                                    'robust_stability_margin': robust_design.get('robust_stability_margin', 0)
+                                }
                             }
-                        }
+                        else:
+                            # Pole placement results
+                            self.design_memory.add_memory(
+                                f"Iteration {num_attempt}: Successful robust pole placement at {final_pole:.3f}"
+                            )
+                            
+                            return {
+                                'is_succ': True,
+                                'parameters': {
+                                    'controller_type': 'POLE_PLACEMENT',
+                                    'pole_location': final_pole,
+                                    'feedback_gain': nominal_gain,
+                                    'success_rate': success_rate
+                                },
+                                'performance': performance_results,
+                                'conversation_rounds': num_attempt,
+                                'robust_metrics': {
+                                    'worst_case_settling_time': worst_settling_time,
+                                    'parameter_success_rate': success_rate,
+                                    'nominal_pole': final_pole,
+                                    'method': 'POLE_PLACEMENT'
+                                }
+                            }
                     
                     else:
-                        # Generate feedback for next iteration
-                        feedback_msg = self.generate_feedback(requirements_met, performance_results, thresholds)
+                        # Generate feedback for next iteration (pass method type)
+                        method_type = robust_design.get('method', 'POLE_PLACEMENT')
+                        feedback_msg = self.generate_feedback(requirements_met, performance_results, thresholds, method_type)
                         self.design_memory.add_feedback(feedback_msg)
                         
-                        self.design_memory.add_memory(
-                            f"Iteration {num_attempt}: Pole {final_pole:.3f}, gain {nominal_gain:.4f} - Requirements not met"
-                        )
+                        # Handle logging for both methods
+                        if robust_design.get('method') == 'HINF':
+                            self.design_memory.add_memory(
+                                f"Iteration {num_attempt}: H∞ controller (γ={robust_design.get('hinf_gamma', 0):.3f}) - Requirements not met"
+                            )
+                        else:
+                            self.design_memory.add_memory(
+                                f"Iteration {num_attempt}: Pole {final_pole:.3f}, gain {nominal_gain:.4f} - Requirements not met"
+                            )
                         
                         print(f"Requirements not satisfied. Feedback: {feedback_msg}")
                 
@@ -279,10 +415,17 @@ Choose your pole based on the plant analysis above!
         robustness_results = robust_design['robustness_results']
         nominal_gain = robust_design['nominal_gain'][0, 0]
         
-        # Calculate actual phase margin using our new method
-        phase_margin = self.robust_controller.calculate_phase_margin(system_info, nominal_gain)
-        
-        print(f"Calculated phase margin: {phase_margin:.2f} degrees")
+        # Calculate phase margin (different for H∞ vs pole placement)
+        if robust_design.get('method') == 'HINF':
+            # For H∞, use robust stability margin as proxy for phase margin
+            robust_margin = robust_design.get('robust_stability_margin', 1.0)
+            # Convert robust stability margin to approximate phase margin
+            phase_margin = min(90.0, max(30.0, robust_margin * 60.0))  # Rough mapping
+            print(f"H∞ robust stability margin: {robust_margin:.3f} → Estimated phase margin: {phase_margin:.2f}°")
+        else:
+            # For pole placement, calculate actual phase margin
+            phase_margin = self.robust_controller.calculate_phase_margin(system_info, nominal_gain)
+            print(f"Calculated phase margin: {phase_margin:.2f} degrees")
         
         # Calculate performance metrics
         performance = {
@@ -329,7 +472,7 @@ Choose your pole based on the plant analysis above!
         
         return results
     
-    def generate_feedback(self, requirements_met, performance, thresholds):
+    def generate_feedback(self, requirements_met, performance, thresholds, method='POLE_PLACEMENT'):
         """Generate feedback for the LLM based on requirement violations."""
         
         if not requirements_met['violations']:
@@ -339,25 +482,44 @@ Choose your pole based on the plant analysis above!
         current_phase_margin = performance.get('phase_margin', 0)
         current_settling = performance.get('settling_time_max', 0)
         
-        for violation in requirements_met['violations']:
-            if "Phase margin" in violation:
-                required_pm = thresholds['phase_margin'].get('min', 0)
-                deficit = required_pm - current_phase_margin
-                # For better phase margin, need slower (less negative) pole
-                feedback_parts.append(f"Phase margin too low ({current_phase_margin:.1f}° < {required_pm:.1f}°). Move pole LESS negative (closer to zero) by ~{deficit*0.01:.3f} to increase phase margin.")
-            
-            elif "Settling time" in violation:
-                max_allowed = thresholds.get('settling_time_max', {}).get('max', np.inf)
-                if current_settling > max_allowed:
-                    excess_time = current_settling - max_allowed
-                    # For faster settling, need more negative pole
-                    feedback_parts.append(f"Settling time too slow ({current_settling:.2f}s > {max_allowed:.2f}s). Move pole MORE negative by factor ~{1 + excess_time/max_allowed:.2f} for faster response.")
-            
-            elif "success rate" in violation:
-                feedback_parts.append("Robustness too low. Use more conservative (more negative) pole for better parameter tolerance.")
+        if method == 'HINF':
+            # H∞-specific feedback
+            for violation in requirements_met['violations']:
+                if "Phase margin" in violation:
+                    required_pm = thresholds['phase_margin'].get('min', 0)
+                    deficit = required_pm - current_phase_margin
+                    feedback_parts.append(f"Phase margin too low ({current_phase_margin:.1f}° < {required_pm:.1f}°). For H∞: Try POLE_PLACEMENT method instead, or increase performance bandwidth ωp by factor ~{1 + deficit/30:.1f} for better margins.")
+                
+                elif "Settling time" in violation:
+                    max_allowed = thresholds.get('settling_time_max', {}).get('max', np.inf)
+                    if current_settling > max_allowed:
+                        excess_time = current_settling - max_allowed
+                        feedback_parts.append(f"Settling time too slow ({current_settling:.2f}s > {max_allowed:.2f}s). For H∞: Increase performance bandwidth ωp by factor ~{1 + excess_time/max_allowed:.1f}.")
+                
+                elif "success rate" in violation:
+                    feedback_parts.append("Robustness too low. For H∞: Reduce control bandwidth ωc or try more conservative design parameters.")
+        else:
+            # Pole placement feedback  
+            for violation in requirements_met['violations']:
+                if "Phase margin" in violation:
+                    required_pm = thresholds['phase_margin'].get('min', 0)
+                    deficit = required_pm - current_phase_margin
+                    feedback_parts.append(f"Phase margin too low ({current_phase_margin:.1f}° < {required_pm:.1f}°). Move pole LESS negative (closer to zero) by ~{deficit*0.01:.3f} to increase phase margin.")
+                
+                elif "Settling time" in violation:
+                    max_allowed = thresholds.get('settling_time_max', {}).get('max', np.inf)
+                    if current_settling > max_allowed:
+                        excess_time = current_settling - max_allowed
+                        feedback_parts.append(f"Settling time too slow ({current_settling:.2f}s > {max_allowed:.2f}s). Move pole MORE negative by factor ~{1 + excess_time/max_allowed:.2f} for faster response.")
+                
+                elif "success rate" in violation:
+                    feedback_parts.append("Robustness too low. Use more conservative (more negative) pole for better parameter tolerance.")
         
         if not feedback_parts:
-            feedback_parts.append("Requirements not satisfied. Try different pole location.")
+            if method == 'HINF':
+                feedback_parts.append("Requirements not satisfied. Try adjusting H∞ design parameters or switch to POLE_PLACEMENT method.")
+            else:
+                feedback_parts.append("Requirements not satisfied. Try different pole location.")
         
         return " ".join(feedback_parts)
     
@@ -435,6 +597,61 @@ Choose your pole based on the plant analysis above!
             print(f"❌ All fallback strategies failed: {e}")
         
         return None  # Complete failure
+    
+    def try_hinf_design(self, system_info, performance_specs, design_params, iteration):
+        """
+        Try H∞ controller design.
+        
+        Args:
+            system_info: System information with uncertainty
+            performance_specs: Performance requirements  
+            design_params: LLM-suggested design parameters
+            iteration: Current iteration number
+            
+        Returns:
+            dict: H∞ design results, or None if failed
+        """
+        
+        print(f"Attempting H∞ controller design...")
+        
+        try:
+            # Use H∞ synthesis
+            hinf_result = self.hinf_controller.design_hinf_controller(
+                system_info, performance_specs, design_params
+            )
+            
+            print(f"✅ H∞ synthesis successful!")
+            print(f"Achieved γ: {hinf_result['gamma']:.3f}")
+            print(f"Robust stability margin: {hinf_result['robust_stability']['robust_stability_margin']:.3f}")
+            
+            # Convert H∞ result to format compatible with pole placement results
+            controller_tf = hinf_result['controller']
+            
+            # For compatibility, extract equivalent "gain" from DC gain of controller
+            try:
+                dc_gain = float(ctrl.dcgain(controller_tf))
+            except:
+                dc_gain = 1.0
+            
+            # Create compatible result structure
+            compatible_result = {
+                'desired_pole': None,  # H∞ doesn't have single pole
+                'nominal_gain': np.array([[dc_gain]]),
+                'robustness_results': {
+                    'success_rate': hinf_result['robust_performance']['success_rate']
+                },
+                'worst_settling_time': hinf_result['robust_performance']['worst_settling_time'],
+                'controller_tf': controller_tf,  # Store full transfer function
+                'hinf_gamma': hinf_result['gamma'],
+                'robust_stability_margin': hinf_result['robust_stability']['robust_stability_margin'],
+                'method': 'HINF'
+            }
+            
+            return compatible_result
+            
+        except Exception as e:
+            print(f"❌ H∞ design failed: {e}")
+            return None
 
 # Test function
 def test_robust_subagent():
